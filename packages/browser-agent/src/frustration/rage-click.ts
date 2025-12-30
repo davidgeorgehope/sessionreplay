@@ -1,3 +1,6 @@
+import { emitFrustrationEvent, type SessionEventAttributes } from '../events';
+import { getSemanticName } from '../semantic/clicks';
+
 /**
  * Event emitted when a rage click is detected
  */
@@ -14,18 +17,28 @@ export interface RageClickEvent {
   timestamp: number;
   /** The element that was rage-clicked */
   element: Element;
+  /** Semantic target info */
+  target?: {
+    semanticName: string;
+    element: string;
+    id?: string;
+  };
 }
 
 /**
  * Configuration for the rage click detector
  */
 export interface RageClickDetectorConfig {
-  /** Callback when rage click is detected */
-  onRageClick: (event: RageClickEvent) => void;
+  /** Callback when rage click is detected (optional) */
+  onRageClick?: (event: RageClickEvent) => void;
   /** Minimum clicks to trigger detection (default: 3) */
   clickThreshold?: number;
   /** Time window for clicks in ms (default: 1000) */
   timeWindowMs?: number;
+  /** Document to attach listeners to (default: document) */
+  document?: Document;
+  /** Whether to emit OTLP log events (default: true) */
+  emitLogs?: boolean;
 }
 
 interface ClickRecord {
@@ -37,15 +50,53 @@ interface ClickRecord {
  * Detects rage clicks - rapid repeated clicks indicating user frustration
  */
 export class RageClickDetector {
-  private config: Required<RageClickDetectorConfig>;
+  private config: {
+    onRageClick?: (event: RageClickEvent) => void;
+    clickThreshold: number;
+    timeWindowMs: number;
+    document: Document;
+    emitLogs: boolean;
+  };
   private clicksByElement: Map<string, ClickRecord[]> = new Map();
+  private enabled = false;
+  private clickHandler: ((event: MouseEvent) => void) | null = null;
 
   constructor(config: RageClickDetectorConfig) {
     this.config = {
       onRageClick: config.onRageClick,
       clickThreshold: config.clickThreshold ?? 3,
       timeWindowMs: config.timeWindowMs ?? 1000,
+      document: config.document ?? (typeof document !== 'undefined' ? document : null as unknown as Document),
+      emitLogs: config.emitLogs ?? true,
     };
+  }
+
+  /**
+   * Enables rage click detection by attaching document listeners
+   */
+  enable(): void {
+    if (this.enabled || !this.config.document) return;
+
+    this.clickHandler = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element) {
+        this.recordClick(target);
+      }
+    };
+
+    this.config.document.addEventListener('click', this.clickHandler, { capture: true });
+    this.enabled = true;
+  }
+
+  /**
+   * Disables rage click detection
+   */
+  disable(): void {
+    if (!this.enabled || !this.clickHandler || !this.config.document) return;
+
+    this.config.document.removeEventListener('click', this.clickHandler, { capture: true });
+    this.clickHandler = null;
+    this.enabled = false;
   }
 
   /**
@@ -74,7 +125,27 @@ export class RageClickDetector {
     // Check if we've reached the threshold
     if (clicks.length >= this.config.clickThreshold) {
       const event = this.createRageClickEvent(clicks, elementId);
-      this.config.onRageClick(event);
+
+      // Emit log event if configured
+      if (this.config.emitLogs) {
+        const attrs: Partial<SessionEventAttributes> = {
+          'frustration.click_count': event.clickCount,
+          'frustration.duration_ms': event.durationMs,
+        };
+        if (event.target) {
+          attrs['target.semantic_name'] = event.target.semanticName;
+          attrs['target.element'] = event.target.element;
+          if (event.target.id) {
+            attrs['target.id'] = event.target.id;
+          }
+        }
+        emitFrustrationEvent('rage_click', event.score, attrs);
+      }
+
+      // Call callback if provided
+      if (this.config.onRageClick) {
+        this.config.onRageClick(event);
+      }
 
       // Reset clicks for this element after detection
       this.clicksByElement.set(elementId, []);
@@ -88,6 +159,14 @@ export class RageClickDetector {
     const firstClick = clicks[0];
     const lastClick = clicks[clicks.length - 1];
     const durationMs = lastClick.timestamp - firstClick.timestamp;
+    const element = lastClick.element;
+
+    // Build semantic target info
+    const target = {
+      semanticName: getSemanticName(element),
+      element: element.tagName.toLowerCase(),
+      id: element.id || undefined,
+    };
 
     return {
       clickCount: clicks.length,
@@ -95,7 +174,8 @@ export class RageClickDetector {
       score: this.calculateScore(clicks.length, durationMs),
       elementId,
       timestamp: lastClick.timestamp,
-      element: lastClick.element,
+      element,
+      target,
     };
   }
 

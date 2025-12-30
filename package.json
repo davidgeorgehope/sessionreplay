@@ -8,7 +8,10 @@
     "test": "pnpm -r test",
     "test:watch": "pnpm -r test:watch",
     "lint": "pnpm -r lint",
-    "clean": "pnpm -r clean"
+    "clean": "pnpm -r clean",
+    "demo": "node examples/demo-app/start.js",
+    "demo:load": "node examples/demo-app/start.js --load",
+    "demo:serve": "node examples/demo-app/server.js"
   },
   "keywords": [
     "session-replay",
@@ -22,5 +25,8 @@
   "engines": {
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
+  },
+  "devDependencies": {
+    "dotenv": "^17.2.3"
   }
 }

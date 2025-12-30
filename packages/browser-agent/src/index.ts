@@ -1,9 +1,57 @@
-// Core provider
+// Re-export OpenTelemetry API for consumer use
+export { trace, context } from '@opentelemetry/api';
+
+// Core provider (traces - for custom business spans)
 export {
   createSessionReplayProvider,
   shutdownProvider,
   getTracer,
 } from './provider';
+
+// Log provider (for session events)
+export {
+  createSessionLogProvider,
+  shutdownLogProvider,
+  getLogger,
+  SeverityNumber,
+} from './log-provider';
+
+// Session management
+export {
+  getSessionId,
+  getSessionStartTime,
+  getNextSequence,
+  getCurrentSequence,
+  resetSession,
+  getSessionDuration,
+  setUser,
+  clearUser,
+  getUser,
+} from './session';
+
+export type { UserIdentity } from './session';
+
+// Event emitter
+export {
+  emitSessionEvent,
+  emitClickEvent,
+  emitNavigationEvent,
+  emitErrorEvent,
+  emitFrustrationEvent,
+  emitFormEvent,
+} from './events';
+
+export type {
+  EventCategory,
+  FrustrationType,
+  BaseEventAttributes,
+  TargetAttributes,
+  FrustrationAttributes,
+  SessionEventAttributes,
+  EmitEventOptions,
+} from './events';
+
+export type { LogProviderConfig } from './log-provider';
 
 // Semantic instrumentation
 export {

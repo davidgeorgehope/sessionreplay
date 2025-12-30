@@ -12,8 +12,9 @@ export function getSessionReplayDashboard(): SavedObject {
     id: 'session-replay-dashboard',
     attributes: {
       title: 'Session Replay - User Frustration',
-      description: 'Dashboard for monitoring user frustration signals from session replay',
+      description: 'Dashboard for monitoring user frustration signals from session replay (OTLP Logs)',
       panelsJSON: JSON.stringify([
+        // Row 1: Session activity and events over time
         {
           version: '8.11.0',
           type: 'lens',
@@ -30,6 +31,7 @@ export function getSessionReplayDashboard(): SavedObject {
           embeddableConfig: {},
           panelRefName: 'panel_2',
         },
+        // Row 2: Frustration over time and by type
         {
           version: '8.11.0',
           type: 'lens',
@@ -46,13 +48,31 @@ export function getSessionReplayDashboard(): SavedObject {
           embeddableConfig: {},
           panelRefName: 'panel_4',
         },
+        // Row 3: Frustrated users and top frustration pages
         {
           version: '8.11.0',
           type: 'lens',
-          gridData: { x: 0, y: 24, w: 48, h: 12, i: '5' },
+          gridData: { x: 0, y: 24, w: 24, h: 12, i: '5' },
           panelIndex: '5',
           embeddableConfig: {},
           panelRefName: 'panel_5',
+        },
+        {
+          version: '8.11.0',
+          type: 'lens',
+          gridData: { x: 24, y: 24, w: 24, h: 12, i: '6' },
+          panelIndex: '6',
+          embeddableConfig: {},
+          panelRefName: 'panel_6',
+        },
+        // Row 4: Errors
+        {
+          version: '8.11.0',
+          type: 'lens',
+          gridData: { x: 0, y: 36, w: 48, h: 12, i: '7' },
+          panelIndex: '7',
+          embeddableConfig: {},
+          panelRefName: 'panel_7',
         },
       ]),
       optionsJSON: JSON.stringify({
@@ -80,27 +100,37 @@ export function getSessionReplayDashboard(): SavedObject {
       {
         name: 'panel_1',
         type: 'lens',
-        id: 'session-replay-frustration-over-time',
+        id: 'session-replay-session-activity',
       },
       {
         name: 'panel_2',
         type: 'lens',
-        id: 'session-replay-frustration-by-type',
+        id: 'session-replay-navigation',
       },
       {
         name: 'panel_3',
         type: 'lens',
-        id: 'session-replay-top-frustration-pages',
+        id: 'session-replay-frustration-over-time',
       },
       {
         name: 'panel_4',
         type: 'lens',
-        id: 'session-replay-errors',
+        id: 'session-replay-frustration-by-type',
       },
       {
         name: 'panel_5',
         type: 'lens',
-        id: 'session-replay-navigation',
+        id: 'session-replay-frustrated-users',
+      },
+      {
+        name: 'panel_6',
+        type: 'lens',
+        id: 'session-replay-top-frustration-pages',
+      },
+      {
+        name: 'panel_7',
+        type: 'lens',
+        id: 'session-replay-errors',
       },
     ],
   };

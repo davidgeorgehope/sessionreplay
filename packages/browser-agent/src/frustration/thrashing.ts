@@ -5,6 +5,8 @@
  * Thrashing occurs when users scroll up and down repeatedly looking for content.
  */
 
+import { emitFrustrationEvent, type SessionEventAttributes } from '../events';
+
 export interface ThrashingEvent {
   type: 'thrashing';
   timestamp: number;
@@ -17,14 +19,16 @@ export interface ThrashingEvent {
 }
 
 export interface ThrashingDetectorConfig {
-  /** Callback when thrashing detected */
-  onThrashing: (event: ThrashingEvent) => void;
+  /** Callback when thrashing detected (optional) */
+  onThrashing?: (event: ThrashingEvent) => void;
   /** Window object (injectable for testing) */
   window?: Window;
   /** Minimum direction changes to trigger (default: 3) */
   minDirectionChanges?: number;
   /** Time window in ms to detect thrashing (default: 2000) */
   timeWindowMs?: number;
+  /** Whether to emit OTLP log events (default: true) */
+  emitLogs?: boolean;
 }
 
 interface ScrollRecord {
@@ -37,7 +41,7 @@ const DEFAULT_MIN_DIRECTION_CHANGES = 3;
 const DEFAULT_TIME_WINDOW_MS = 2000;
 
 export class ThrashingDetector {
-  private config: ThrashingDetectorConfig;
+  private config: ThrashingDetectorConfig & { emitLogs: boolean };
   private win: Window;
   private enabled = false;
   private scrollHandler: (() => void) | null = null;
@@ -47,7 +51,10 @@ export class ThrashingDetector {
   private totalDistance: number = 0;
 
   constructor(config: ThrashingDetectorConfig) {
-    this.config = config;
+    this.config = {
+      ...config,
+      emitLogs: config.emitLogs ?? true,
+    };
     this.win = config.window || (typeof window !== 'undefined' ? window : null!);
   }
 
@@ -150,7 +157,21 @@ export class ThrashingDetector {
         pageUrl: this.win.location.href,
       };
 
-      this.config.onThrashing(event);
+      // Emit log event if configured
+      if (this.config.emitLogs) {
+        const attrs: Partial<SessionEventAttributes> = {
+          'frustration.direction_changes': event.directionChanges,
+          'frustration.duration_ms': event.durationMs,
+          'frustration.scroll_distance': event.scrollDistance,
+          'frustration.scroll_depth_percent': Math.round(event.scrollDepthPercent),
+        };
+        emitFrustrationEvent('thrashing', event.score, attrs);
+      }
+
+      // Call callback if provided
+      if (this.config.onThrashing) {
+        this.config.onThrashing(event);
+      }
 
       // Reset after detection to avoid repeated events
       this.reset();

@@ -14,7 +14,7 @@ const external = [
 ];
 
 export default [
-  // ESM and CJS builds
+  // ESM and CJS builds (for bundlers)
   {
     input: 'src/index.ts',
     output: [
@@ -32,6 +32,24 @@ export default [
     external,
     plugins: [
       resolve(),
+      commonjs(),
+      typescript({
+        tsconfig: './tsconfig.json',
+        declaration: false,
+      }),
+    ],
+  },
+  // Browser bundle (all deps included, for direct <script> use)
+  {
+    input: 'src/index.ts',
+    output: {
+      file: 'dist/browser.js',
+      format: 'esm',
+      sourcemap: true,
+    },
+    // Don't externalize - bundle everything
+    plugins: [
+      resolve({ browser: true }),
       commonjs(),
       typescript({
         tsconfig: './tsconfig.json',

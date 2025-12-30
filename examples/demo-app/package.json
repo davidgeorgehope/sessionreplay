@@ -1,0 +1,14 @@
+{
+  "name": "session-replay-demo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "node server.js",
+    "test:load": "node load-test.js",
+    "start": "node start.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.57.0"
+  }
+}

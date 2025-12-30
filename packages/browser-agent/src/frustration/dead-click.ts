@@ -1,3 +1,6 @@
+import { emitFrustrationEvent, type SessionEventAttributes } from '../events';
+import { getSemanticName } from '../semantic/clicks';
+
 /**
  * Event emitted when a dead click is detected
  */
@@ -22,8 +25,14 @@ export interface DeadClickEvent {
  * Configuration for the dead click detector
  */
 export interface DeadClickDetectorConfig {
-  /** Callback when dead click is detected */
-  onDeadClick: (event: DeadClickEvent) => void;
+  /** Callback when dead click is detected (optional) */
+  onDeadClick?: (event: DeadClickEvent) => void;
+  /** Document to attach listeners to (default: document) */
+  document?: Document;
+  /** Whether to emit OTLP log events (default: true) */
+  emitLogs?: boolean;
+  /** Whether to check parent elements for interactivity (default: true) */
+  checkParents?: boolean;
 }
 
 /**
@@ -126,17 +135,63 @@ function getDeadClickReason(element: Element): DeadClickEvent['reason'] {
  * Detects dead clicks - clicks on non-interactive elements
  */
 export class DeadClickDetector {
-  private config: DeadClickDetectorConfig;
+  private config: {
+    onDeadClick?: (event: DeadClickEvent) => void;
+    document: Document;
+    emitLogs: boolean;
+    checkParents: boolean;
+  };
+  private enabled = false;
+  private clickHandler: ((event: MouseEvent) => void) | null = null;
 
   constructor(config: DeadClickDetectorConfig) {
-    this.config = config;
+    this.config = {
+      onDeadClick: config.onDeadClick,
+      document: config.document ?? (typeof document !== 'undefined' ? document : null as unknown as Document),
+      emitLogs: config.emitLogs ?? true,
+      checkParents: config.checkParents ?? true,
+    };
+  }
+
+  /**
+   * Enables dead click detection by attaching document listeners
+   */
+  enable(): void {
+    if (this.enabled || !this.config.document) return;
+
+    this.clickHandler = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element) {
+        // Check if element looks clickable (has pointer cursor)
+        let looksClickable = false;
+        if (typeof window !== 'undefined') {
+          const style = window.getComputedStyle(target);
+          looksClickable = style.cursor === 'pointer';
+        }
+        this.recordClick(target, { looksClickable, checkParents: this.config.checkParents });
+      }
+    };
+
+    this.config.document.addEventListener('click', this.clickHandler, { capture: true });
+    this.enabled = true;
+  }
+
+  /**
+   * Disables dead click detection
+   */
+  disable(): void {
+    if (!this.enabled || !this.clickHandler || !this.config.document) return;
+
+    this.config.document.removeEventListener('click', this.clickHandler, { capture: true });
+    this.clickHandler = null;
+    this.enabled = false;
   }
 
   /**
    * Records a click and checks if it's a dead click
    */
   recordClick(element: Element, options: RecordClickOptions = {}): void {
-    const { looksClickable = false, checkParents = false } = options;
+    const { looksClickable = false, checkParents = this.config.checkParents } = options;
 
     // Check if element or any parent is interactive
     let currentElement: Element | null = element;
@@ -160,8 +215,29 @@ export class DeadClickDetector {
     }
 
     // This is a dead click
-    const event = this.createDeadClickEvent(element, looksClickable);
-    this.config.onDeadClick(event);
+    const deadClickEvent = this.createDeadClickEvent(element, looksClickable);
+
+    // Emit log event if configured
+    if (this.config.emitLogs) {
+      const semanticName = getSemanticName(element);
+      const attrs: Partial<SessionEventAttributes> = {
+        'target.semantic_name': semanticName,
+        'target.element': deadClickEvent.elementTag,
+        'frustration.reason': deadClickEvent.reason,
+      };
+      if (deadClickEvent.elementId) {
+        attrs['target.id'] = deadClickEvent.elementId;
+      }
+      if (deadClickEvent.looksClickable) {
+        attrs['frustration.looks_clickable'] = true;
+      }
+      emitFrustrationEvent('dead_click', deadClickEvent.score, attrs);
+    }
+
+    // Call callback if provided
+    if (this.config.onDeadClick) {
+      this.config.onDeadClick(deadClickEvent);
+    }
   }
 
   /**

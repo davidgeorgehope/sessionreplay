@@ -1,5 +1,5 @@
-import { trace } from '@opentelemetry/api';
 import type { ClickTarget } from '../types';
+import { emitSessionEvent, type SessionEventAttributes } from '../events';
 
 const MAX_SEMANTIC_NAME_LENGTH = 50;
 
@@ -203,36 +203,44 @@ export class ClickInstrumentation {
       return;
     }
 
-    const tracer = trace.getTracer('session-replay');
     const clickTarget = buildClickTarget(target);
 
-    const span = tracer.startSpan('user.click', {
-      attributes: {
-        'event.type': 'user.interaction',
-        'event.action': 'click',
-        'target.semantic_name': clickTarget.semanticName,
-        'target.element': clickTarget.element,
-        'target.id': clickTarget.id || '',
-        'target.classes': clickTarget.classes?.join(' ') || '',
-        'target.component': clickTarget.component || '',
-        'page.url': this.config.document.location?.href || '',
-        'page.title': this.config.document.title || '',
-      },
-    });
+    // Build attributes for the event
+    const attributes: Partial<SessionEventAttributes> = {
+      'event.category': 'user.interaction',
+      'event.action': 'click',
+      'target.semantic_name': clickTarget.semanticName,
+      'target.element': clickTarget.element,
+    };
 
-    // Add data attributes as span attributes
+    // Add optional target properties
+    if (clickTarget.id) {
+      attributes['target.id'] = clickTarget.id;
+    }
+    if (clickTarget.classes && clickTarget.classes.length > 0) {
+      attributes['target.classes'] = clickTarget.classes.join(' ');
+    }
+    if (clickTarget.component) {
+      attributes['target.component'] = clickTarget.component;
+    }
+
+    // Add data attributes
     if (clickTarget.dataAttributes) {
       for (const [key, value] of Object.entries(clickTarget.dataAttributes)) {
-        span.setAttribute(`target.data.${key}`, value);
+        (attributes as Record<string, string>)[`target.data.${key}`] = value;
       }
     }
 
     // Add coordinates if configured
     if (this.config.captureCoordinates) {
-      span.setAttribute('event.x', event.clientX);
-      span.setAttribute('event.y', event.clientY);
+      attributes['event.x'] = event.clientX;
+      attributes['event.y'] = event.clientY;
     }
 
-    span.end();
+    // Emit the click event as a log record
+    emitSessionEvent({
+      name: 'user.click',
+      attributes,
+    });
   }
 }

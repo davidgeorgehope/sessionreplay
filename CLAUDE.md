@@ -25,230 +25,444 @@ Traditional session replay (FullStory, LogRocket, Hotjar) solves this by recordi
 | **No semantic understanding** | Records pixels, not meaning |
 | **Siloed from APM** | No correlation to backend traces |
 
-## Our Approach
+## Architecture
 
-### Core Insight
+### Signal Strategy: Logs + Traces
 
-We don't need video. We need **understanding**. Capture semantically rich events, let AI synthesize the narrative.
+We use **two complementary OTLP signals**:
 
-### Architecture
+| Signal | Use Case | Elastic Destination |
+|--------|----------|---------------------|
+| **Logs** | Discrete events (clicks, frustration, navigation) | `logs-generic.otel-default` |
+| **Traces** | Business operations with duration (checkout flow, API calls) | `traces-generic.otel-default` |
+
+**Why not just Traces?**
+
+Long-lived spans are a known unsolved problem in OpenTelemetry:
+- Spans remain in memory until `end()` is called
+- If browser closes before span ends → data lost
+- `beforeunload` is unreliable (Chrome deprecated `unload`)
+
+Logs solve this: events send immediately, no lifecycle management needed.
+
+### Data Flow
 
 ```
-┌─────────────────────┐     OTLP      ┌─────────────────────┐
-│  Browser JS Agent   │──────────────▶│   OTEL Collector    │
-│  (semantic events)  │               └──────────┬──────────┘
-└─────────────────────┘                          │
-                                                 ▼
-                                      ┌─────────────────────┐
-                                      │   Elastic APM/Logs  │
-                                      │  (indexed events)   │
-                                      └──────────┬──────────┘
-                                                 │
-                                                 ▼
-                                      ┌─────────────────────┐
-                                      │    AI Query Layer   │
-                                      │  (LLM + RAG/Tools)  │
-                                      └─────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                     Browser JS Agent                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ Log Provider│  │Trace Provider│  │  Instrumentations   │  │
+│  │(user events)│  │(business ops)│  │(clicks, frustration)│  │
+│  └──────┬──────┘  └──────┬──────┘  └─────────────────────┘  │
+└─────────┼────────────────┼──────────────────────────────────┘
+          │                │
+          │ OTLP/HTTP      │ OTLP/HTTP
+          ▼                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Elastic Cloud                             │
+│  ┌─────────────────────┐  ┌─────────────────────────────┐   │
+│  │logs-generic.otel-   │  │traces-generic.otel-default  │   │
+│  │default              │  │                             │   │
+│  │                     │  │ Transactions = root spans   │   │
+│  │ user.click          │  │ Spans = child spans         │   │
+│  │ user.frustration.*  │  │                             │   │
+│  │ user.navigation     │  │ checkout.submit             │   │
+│  │ form.*              │  │ └─ api.call                 │   │
+│  └─────────────────────┘  │    └─ db.query              │   │
+│                           └─────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### What We Capture (Semantic Events)
+### Elastic APM Terminology
 
-Instead of DOM mutations, we capture meaning:
+In Elastic APM:
+- **Transaction** = root span (no parent) - the entry point
+- **Span** = child span (has a parent) - operations within a transaction
+
+To see parent-child relationships, create spans within a transaction context:
+
+```javascript
+const tracer = getTracer();
+
+// Transaction (root span)
+const checkoutTx = tracer.startSpan('checkout.submit');
+
+// Child spans within the transaction
+const apiSpan = tracer.startSpan('api.call', { parent: checkoutTx });
+// ... do API call
+apiSpan.end();
+
+checkoutTx.end();
+```
+
+## Event Schema
+
+### Log Events (OTLP Logs)
+
+All events include session and user context:
 
 ```json
 {
-  "event": "user.interaction",
-  "action": "click",
-  "target": {
-    "semantic_name": "Submit Order",
-    "component": "CheckoutForm",
-    "element": "button#submit",
-    "context": { "cart_total": 149.99, "items": 3 }
+  "timestamp": "2025-12-30T15:30:00Z",
+  "severityNumber": 9,
+  "body": "user.click",
+  "attributes": {
+    "session.id": "sess_abc123",
+    "session.sequence": 42,
+    "session.duration_ms": 15000,
+    "user.id": "david",
+    "user.email": "david@example.com",
+    "user.name": "David Hope",
+    "event.category": "user.interaction",
+    "event.action": "click",
+    "target.semantic_name": "Submit Order",
+    "target.element": "button",
+    "target.id": "btn-submit",
+    "page.url": "https://example.com/checkout",
+    "page.title": "Checkout"
   },
-  "frustration_signals": {
-    "rapid_clicks": 6,
-    "time_since_page_load": 45000,
-    "previous_attempts": 2
-  },
-  "session_id": "sess_abc123",
-  "trace_id": "trace_xyz789",
-  "user": { "id": "david.hope" }
+  "resource": {
+    "service.name": "session-replay-demo"
+  }
 }
 ```
 
-### Frustration & Intent Signals
-
-Key behavioral signals to detect and capture:
-
-- **Rage clicks**: Multiple rapid clicks on same element (frustration)
-- **Dead clicks**: Clicks on non-interactive elements (user expected action)
-- **Thrashing**: Rapid scroll up/down (user is lost)
-- **Form hesitation**: Long pauses on fields (confusion, looking up info)
-- **Error blindness**: User continues after unnoticed error
-- **Abandonment patterns**: Where in flow users leave
-
-### AI Query Interface
-
-The LLM should support queries like:
-
-| Query | Expected Behavior |
-|-------|-------------------|
-| "What did user X experience?" | Narrate their session as a story |
-| "Why did checkout fail for user X?" | Trace frontend → API → backend error |
-| "Show me frustrated users today" | Find sessions with rage clicks, errors |
-| "What's common among cart abandoners?" | Pattern analysis across sessions |
-| "Summarize errors on /settings this week" | Aggregate frontend errors with context |
-
-## Technical Decisions
-
-### Why OTLP?
-
-- Standard protocol; works with any OTEL-compatible backend
-- Elastic supports OTLP natively
-- Enables correlation between frontend events and backend traces via `trace_id`
-- Future-proof; not locked to any vendor
-
-### Why Elastic?
-
-- Already have trace/span model for APM
-- Good query capabilities for the patterns we need
-- Can correlate frontend events with existing backend traces
-- Native OTLP ingestion
-
-### Browser Instrumentation Strategy
-
-Build on OpenTelemetry Browser SDK with custom instrumentation:
-
-1. **Core OTEL**: Use `@opentelemetry/sdk-trace-web` for base infrastructure
-2. **Auto-instrumentation**: Leverage existing plugins for XHR, fetch, document load
-3. **Custom semantic layer**: Our instrumentation for:
-   - Semantic click tracking (not coordinates)
-   - Frustration signal detection
-   - Form behavior analytics
-   - Error context capture
-   - Component/framework awareness (React, Vue, etc.)
-
-## Data Model
-
-### Session Document
+### Frustration Events
 
 ```json
 {
-  "session_id": "sess_abc123",
-  "user_id": "david.hope",
-  "started_at": "2025-12-29T14:32:00Z",
-  "ended_at": "2025-12-29T14:47:00Z",
-  "pages_visited": ["/products", "/cart", "/checkout"],
-  "frustration_score": 0.72,
-  "errors_encountered": 2,
-  "outcome": "abandoned"
+  "body": "user.frustration.rage_click",
+  "attributes": {
+    "session.id": "sess_abc123",
+    "user.id": "david",
+    "event.category": "user.frustration",
+    "frustration.type": "rage_click",
+    "frustration.score": 0.8,
+    "frustration.click_count": 6,
+    "frustration.duration_ms": 850,
+    "target.semantic_name": "Submit Order"
+  }
 }
 ```
 
-### Event Document
+### Event Categories
 
-```json
-{
-  "event_id": "evt_123",
-  "session_id": "sess_abc123",
-  "timestamp": "2025-12-29T14:45:23Z",
-  "event_type": "user.interaction",
-  "action": "click",
-  "target": {
-    "semantic_name": "Submit Order",
-    "component": "CheckoutForm"
-  },
-  "frustration_signals": { "rapid_clicks": 6 },
-  "trace_id": "trace_xyz789"
-}
-```
+| Category | Events | Description |
+|----------|--------|-------------|
+| `user.interaction` | `click` | User clicks on elements |
+| `user.frustration` | `rage_click`, `dead_click`, `thrashing` | Frustration signals |
+| `user.navigation` | `pageview`, `hashchange` | Page navigation |
+| `user.error` | errors | JavaScript errors |
+| `form.interaction` | `focus`, `blur`, `submit` | Form behavior |
 
-### Correlation to APM
+## Frustration Detection
 
-The `trace_id` field in frontend events links to backend traces:
+### Rage Clicks
+Multiple rapid clicks on same element indicating frustration.
 
-```
-Frontend Event (trace_id: xyz789)
-    ↓
-Backend Span (trace_id: xyz789, service: checkout-api)
-    ↓
-Database Span (trace_id: xyz789, service: postgres)
-    ↓
-Error: "Card declined" (trace_id: xyz789)
-```
+**Config:**
+- `clickThreshold`: Min clicks to trigger (default: 3)
+- `timeWindowMs`: Time window in ms (default: 1000)
 
-AI can traverse this entire chain to explain what happened.
+**Score:** 0-1 based on click count and velocity
 
-## Project Structure (Planned)
+### Dead Clicks
+Clicks on non-interactive elements (user expected action).
+
+**Detection:**
+- Element is not `<a>`, `<button>`, `<input>`, etc.
+- No click handler attached
+- Not inside interactive parent
+
+### Thrashing
+Rapid scroll direction changes indicating user is lost.
+
+**Config:**
+- `minDirectionChanges`: Min changes to trigger (default: 3)
+- `timeWindowMs`: Time window in ms (default: 2000)
+
+## Project Structure
 
 ```
 sessionreplay/
 ├── packages/
-│   ├── browser-agent/       # Browser instrumentation
-│   │   ├── src/
-│   │   │   ├── semantic/    # Semantic event capture
-│   │   │   ├── frustration/ # Frustration signal detection
-│   │   │   ├── forms/       # Form behavior tracking
-│   │   │   └── exporter/    # OTLP export
-│   │   └── package.json
-│   ├── collector-config/    # OTEL collector configuration
-│   └── ai-query/            # AI query interface
+│   └── browser-agent/           # Browser instrumentation
+│       ├── src/
+│       │   ├── provider.ts      # Trace provider (business spans)
+│       │   ├── log-provider.ts  # Log provider (user events)
+│       │   ├── session.ts       # Session ID + user management
+│       │   ├── events.ts        # Event emitter helpers
+│       │   ├── semantic/        # Semantic instrumentation
+│       │   │   ├── clicks.ts    # Click tracking
+│       │   │   ├── forms.ts     # Form tracking
+│       │   │   ├── navigation.ts
+│       │   │   └── errors.ts
+│       │   └── frustration/     # Frustration detection
+│       │       ├── rage-click.ts
+│       │       ├── dead-click.ts
+│       │       └── thrashing.ts
+│       └── dist/
+│           └── browser.js       # Browser bundle (all deps included)
 ├── examples/
-│   ├── react-app/           # Example React integration
-│   └── vanilla-js/          # Vanilla JS integration
-├── docs/
-│   └── schema.md            # Event schema documentation
-├── CLAUDE.md                # This file
-└── README.md                # Project overview
+│   └── demo-app/                # Demo application
+│       ├── index.html           # Demo UI
+│       ├── demo.js              # Instrumentation setup
+│       ├── server.js            # Dev server
+│       ├── load-test.js         # Playwright automation
+│       └── start.js             # Launcher script
+├── scripts/
+│   └── kibana/                  # Dashboard definitions
+│       ├── visualizations.ts
+│       └── dashboards.ts
+├── start.sh                     # Quick start script
+├── CLAUDE.md                    # This file
+└── README.md                    # User-facing docs
 ```
 
-## Development Phases
+## Quick Start
 
-### Phase 1: Browser Agent Foundation
-- [ ] Set up OTEL browser SDK
-- [ ] Implement semantic click tracking
-- [ ] Basic frustration detection (rage clicks)
-- [ ] OTLP export to Elastic
+```bash
+# 1. Configure OTLP credentials
+cp examples/demo-app/.env.example examples/demo-app/.env
+# Edit .env with your Elastic Cloud credentials
 
-### Phase 2: Rich Event Capture
-- [ ] Form behavior analytics
-- [ ] Component awareness (React/Vue)
-- [ ] Error context capture
-- [ ] Navigation and page lifecycle
+# 2. Start demo with load testing
+./start.sh
 
-### Phase 3: AI Query Layer
-- [ ] Elasticsearch query interface
-- [ ] LLM integration (tool use for search)
-- [ ] Session narrative generation
-- [ ] Pattern detection queries
+# Or manually:
+node examples/demo-app/start.js --load
+```
 
-### Phase 4: Polish & Examples
-- [ ] Framework-specific integrations
-- [ ] Dashboard/visualization
-- [ ] Documentation
-- [ ] Example applications
+## API Reference
+
+### Session Management
+
+```typescript
+import {
+  getSessionId,      // Get current session ID
+  setUser,           // Set user identity
+  clearUser,         // Clear user (logout)
+  getUser,           // Get current user
+  resetSession,      // Force new session
+} from '@anthropic/session-replay-browser-agent';
+
+// Set user after login
+setUser({
+  id: 'david',
+  email: 'david@example.com',
+  name: 'David Hope'
+});
+```
+
+### Log Provider
+
+```typescript
+import {
+  createSessionLogProvider,
+  emitSessionEvent,
+  emitClickEvent,
+  emitFrustrationEvent,
+} from '@anthropic/session-replay-browser-agent';
+
+// Initialize
+const logProvider = createSessionLogProvider({
+  serviceName: 'my-app',
+  endpoint: 'https://your-elastic.cloud:443/v1/logs',
+  apiKey: 'your-api-key',
+});
+
+// Emit custom events
+emitSessionEvent({
+  name: 'custom.event',
+  attributes: {
+    'event.category': 'user.interaction',
+    'custom.field': 'value',
+  },
+});
+```
+
+### Trace Provider (Business Operations)
+
+```typescript
+import {
+  createSessionReplayProvider,
+  getTracer,
+  trace,
+  context,
+} from '@anthropic/session-replay-browser-agent';
+
+// Initialize
+const traceProvider = createSessionReplayProvider({
+  serviceName: 'my-app',
+  endpoint: 'https://your-elastic.cloud:443/v1/traces',
+  apiKey: 'your-api-key',
+});
+
+// Create business operation spans
+const tracer = getTracer();
+const span = tracer.startSpan('checkout.submit');
+span.setAttribute('cart.total', 149.99);
+// ... do checkout
+span.end();
+```
+
+### Parent-Child Span Hierarchy
+
+To create child spans under a parent (visible as Transaction → Spans in Elastic APM):
+
+```typescript
+import { trace, context, getTracer, emitSessionEvent } from '@anthropic/session-replay-browser-agent';
+
+const tracer = getTracer();
+
+// Parent span (becomes Transaction in Elastic)
+const parentSpan = tracer.startSpan('checkout.buy_now');
+
+// Execute child operations within parent context
+context.with(trace.setSpan(context.active(), parentSpan), () => {
+  // Child span 1
+  const validateSpan = tracer.startSpan('checkout.validate_cart');
+  validateSpan.setAttribute('cart.items', 3);
+  validateSpan.end();
+
+  // Child span 2
+  const paymentSpan = tracer.startSpan('checkout.process_payment');
+  paymentSpan.setAttribute('payment.method', 'credit_card');
+
+  // Logs emitted within trace context are auto-correlated
+  emitSessionEvent({
+    name: 'payment.started',
+    attributes: { 'event.category': 'user.interaction' },
+  });
+  // This log will have trace.id and span.id attributes!
+
+  paymentSpan.end();
+});
+
+parentSpan.end();
+```
+
+### Trace-Log Correlation
+
+Logs emitted within an active trace context automatically include `trace.id` and `span.id`:
+
+```json
+{
+  "body": "payment.started",
+  "attributes": {
+    "session.id": "sess_abc123",
+    "trace.id": "32f9e17f...",
+    "span.id": "9ac7c0be...",
+    "event.category": "user.interaction"
+  }
+}
+```
+
+Query correlated logs in Elastic:
+```sql
+FROM logs-generic.otel-default
+| WHERE attributes.trace.id == "32f9e17f..."
+```
+
+### Frustration Detectors
+
+```typescript
+import {
+  RageClickDetector,
+  DeadClickDetector,
+  ThrashingDetector,
+} from '@anthropic/session-replay-browser-agent';
+
+// All detectors auto-emit logs when enabled
+const rageDetector = new RageClickDetector({
+  clickThreshold: 3,
+  timeWindowMs: 1000,
+  emitLogs: true,  // default
+  onRageClick: (event) => console.log('Rage!', event),
+});
+rageDetector.enable();
+```
+
+## Elastic Queries
+
+### ES|QL Examples
+
+```sql
+-- All events for a user
+FROM logs-generic.otel-default
+| WHERE attributes.user.id == "david"
+| SORT @timestamp ASC
+
+-- Frustrated users today
+FROM logs-generic.otel-default
+| WHERE attributes.frustration.type IS NOT NULL
+| STATS count = COUNT() BY attributes.user.id
+| SORT count DESC
+
+-- Rage clicks by page
+FROM logs-generic.otel-default
+| WHERE attributes.frustration.type == "rage_click"
+| STATS count = COUNT() BY attributes.page.url
+| SORT count DESC
+
+-- Session timeline
+FROM logs-generic.otel-default
+| WHERE attributes.session.id == "sess_abc123"
+| SORT attributes.session.sequence ASC
+```
+
+### KQL Examples (Discover)
+
+```
+# All frustration events
+attributes.frustration.type: *
+
+# Specific user's session
+attributes.user.id: "david" AND attributes.session.id: "sess_abc123"
+
+# High frustration score
+attributes.frustration.score >= 0.7
+```
+
+## Development
+
+### Building
+
+```bash
+cd packages/browser-agent
+pnpm install
+pnpm build
+```
+
+### Testing
+
+```bash
+# Unit tests
+pnpm test
+
+# Load testing with Playwright
+ITERATIONS=10 node examples/demo-app/start.js --load
+
+# Interactive (non-headless)
+HEADLESS=false node examples/demo-app/start.js --load
+```
 
 ## Key Design Principles
 
-1. **Semantic over syntactic**: Capture meaning, not pixels
-2. **Privacy by design**: Only capture structured events, not raw DOM
-3. **Correlation-first**: Every event links to traces
-4. **Query over watch**: Data should be queryable, not just viewable
-5. **AI-native**: Designed for LLM consumption from the start
+1. **Logs for events, Traces for operations**: User interactions are discrete events (logs), business flows have duration (traces)
+2. **Semantic over syntactic**: Capture meaning ("Submit Order" button), not pixels
+3. **Privacy by design**: Structured events only, no DOM recording
+4. **Immediate delivery**: Logs send instantly, no data loss on tab close
+5. **Correlation-first**: session.id links events, trace_id links to backend
+6. **AI-native**: Structured for LLM consumption and natural language queries
 
 ## For Claude
 
 When working on this project:
 
-- The goal is an AI-native alternative to session replay
-- We're using OTLP/OpenTelemetry for instrumentation
-- Target backend is Elastic (but architecture should be backend-agnostic)
-- Focus on semantic event capture, not DOM recording
-- Frustration signals are a key differentiator
-- Everything should correlate via trace_id
-
-When implementing:
-- Use TypeScript for the browser agent
-- Follow OpenTelemetry conventions where applicable
-- Keep the agent lightweight (bundle size matters)
-- Make instrumentation non-intrusive to host applications
+- Events go to logs (`logs-generic.otel-default`), business operations go to traces
+- User identity via `setUser()` - automatically included in all events
+- Frustration detectors auto-emit logs when `emitLogs: true` (default)
+- In Elastic: Transaction = root span, Span = child span
+- Keep the browser bundle lightweight
+- All instrumentation should be opt-in and non-intrusive
