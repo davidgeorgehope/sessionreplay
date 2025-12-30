@@ -1,0 +1,26 @@
+{
+  "name": "session-replay",
+  "version": "0.0.1",
+  "private": true,
+  "description": "AI-native session understanding - semantic events instead of DOM recording",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "test:watch": "pnpm -r test:watch",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r clean"
+  },
+  "keywords": [
+    "session-replay",
+    "opentelemetry",
+    "observability",
+    "user-experience",
+    "frustration-detection"
+  ],
+  "author": "David Hope",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
