@@ -62,7 +62,7 @@ This section walks through setting up Elastic Cloud to receive session replay da
 ### Prerequisites
 
 - Elastic Cloud account ([sign up for a free trial](https://cloud.elastic.co/registration))
-- Or self-hosted Elastic Stack 8.x+ with APM Server
+- Or self-hosted Elastic Stack 8.x+ with OTLP ingestion enabled
 
 ### Step 1: Create a Deployment
 
@@ -79,19 +79,11 @@ If you don't have an existing deployment:
 
 The browser agent sends data via OTLP (OpenTelemetry Protocol). To find your endpoint:
 
-**Option A: From the Observability UI**
-1. In Kibana, go to **Observability → Add data**
-2. Select **Monitor infrastructure** → **OpenTelemetry**
-3. Copy the OTLP endpoint (looks like: `https://xxx.apm.us-east-1.aws.elastic.cloud:443`)
-
-**Option B: From Deployment Settings**
-1. Go to [cloud.elastic.co](https://cloud.elastic.co) → **Deployments** → Your deployment
-2. Click **Copy endpoint** next to APM & Fleet
-3. The endpoint format: `https://xxx.apm.us-east-1.aws.elastic.cloud:443`
-
-Your OTLP endpoints will be:
-- Logs: `{endpoint}/v1/logs`
-- Traces: `{endpoint}/v1/traces`
+1. In Kibana, go to **Add data → Applications → OpenTelemetry**
+2. Copy the OTLP endpoint URL provided
+3. Your endpoints will be:
+   - Logs: `{endpoint}/v1/logs`
+   - Traces: `{endpoint}/v1/traces`
 
 ### Step 3: Create an API Key
 
@@ -125,23 +117,25 @@ Edit `.env` with your values:
 
 ```bash
 # OTLP Endpoint (from Step 2)
-OTEL_EXPORTER_OTLP_ENDPOINT=https://your-deployment.apm.us-east-1.aws.elastic.cloud:443
+OTEL_EXPORTER_OTLP_ENDPOINT=https://your-otlp-endpoint.elastic.cloud:443
 
-# API Key for OTLP auth (from Step 3 - the encoded Base64 value)
+# API Key for authentication (must include "ApiKey" prefix)
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=ApiKey YOUR_ENCODED_API_KEY
 
 # Service metadata
-OTEL_RESOURCE_ATTRIBUTES=service.name=session-replay-demo,service.version=0.0.1,deployment.environment=development
+OTEL_RESOURCE_ATTRIBUTES=service.name=session-replay-demo,deployment.environment=development
 
-# For dashboard setup and verification scripts
-KIBANA_URL=https://your-deployment.kb.us-east-1.aws.elastic.cloud
+# Elasticsearch endpoint (for verification scripts - replace .kb. with .es. from Kibana URL)
+ES_ENDPOINT=https://your-deployment.es.us-east-1.aws.elastic.cloud:443
 ES_API_KEY=YOUR_ENCODED_API_KEY
+
+# Kibana URL (for dashboard setup)
+KIBANA_URL=https://your-deployment.kb.us-east-1.aws.elastic.cloud
 ```
 
 **Finding your Kibana URL:**
 - Go to [cloud.elastic.co](https://cloud.elastic.co) → **Deployments** → Your deployment
-- Click **Copy endpoint** next to Kibana
-- Or click **Open** next to Kibana and copy the URL from your browser
+- Click **Open** next to Kibana and copy the URL from your browser
 
 ### Step 5: Deploy the Dashboard
 
@@ -222,7 +216,7 @@ View your dashboard at:
 
 **CORS errors in browser console**
 - Elastic Cloud OTLP endpoints support CORS by default
-- If self-hosted, configure APM Server CORS settings
+- If self-hosted, ensure your OTLP endpoint has CORS configured
 
 **"Data view not found" in dashboard**
 - Run the setup script again to create the data view
