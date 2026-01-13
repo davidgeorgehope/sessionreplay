@@ -379,6 +379,209 @@ attributes.frustration.score >= 0.7
 attributes.user.id: "david"
 ```
 
+## Session Replay Use Cases
+
+The power of semantic session replay is that you can **query** user behavior instead of watching videos. Here are the key use cases:
+
+### 1. Funnel Drop-off Analysis
+
+**Question**: "Where are users dropping off and why?"
+
+| Funnel Stage | Drop-off Signal | Root Cause Pattern |
+|--------------|-----------------|-------------------|
+| Products → Cart | No `add-to-cart` click | Pricing confusion, no CTA visibility |
+| Cart → Checkout | Cart abandonment | Shipping cost surprise, login wall |
+| Checkout → Payment | Form abandonment | Confusing fields, validation errors |
+| Payment → Confirmation | Rage click on submit | Button disabled, slow API, payment error |
+
+```sql
+-- Find sessions that dropped at cart with frustration
+FROM logs-generic.otel-default
+| WHERE attributes.page.url LIKE "*cart*"
+| WHERE attributes.event.category == "user.frustration"
+| STATS
+    rage_clicks = COUNT_IF(attributes.frustration.type == "rage_click"),
+    dead_clicks = COUNT_IF(attributes.frustration.type == "dead_click")
+  BY attributes.session.id
+| SORT rage_clicks DESC
+```
+
+### 2. Rage Click Investigation
+
+**Question**: "Why are users clicking repeatedly on this button?"
+
+**Signals**:
+- `frustration.type: rage_click`
+- `frustration.click_count > 5`
+- `frustration.score > 0.7`
+
+**Common causes**:
+- Button disabled during API call (no loading indicator)
+- JavaScript error preventing handler
+- Network timeout (correlate with trace data)
+- Double-click protection blocking legitimate clicks
+
+```sql
+-- What elements are getting rage-clicked?
+FROM logs-generic.otel-default
+| WHERE attributes.frustration.type == "rage_click"
+| STATS count = COUNT() BY attributes.target.semantic_name, attributes.target.id
+| SORT count DESC
+```
+
+### 3. Dead Click Confusion
+
+**Question**: "Why do users click on things that don't work?"
+
+**Signals**:
+- `frustration.type: dead_click`
+- `frustration.reason: non_interactive`
+
+**Common causes**:
+- Styled div looks like a button
+- Link missing href attribute
+- Disabled state not visually obvious
+- Image that looks like a CTA
+
+```sql
+-- Dead clicks by page
+FROM logs-generic.otel-default
+| WHERE attributes.frustration.type == "dead_click"
+| STATS count = COUNT() BY attributes.page.url, attributes.target.element
+| SORT count DESC
+```
+
+### 4. Error → Abandonment Correlation
+
+**Question**: "Are JavaScript errors causing users to leave?"
+
+```sql
+-- Find sessions with errors and see what happened after
+FROM logs-generic.otel-default
+| WHERE attributes.event.category == "user.error"
+| STATS
+    error_count = COUNT(),
+    error_messages = VALUES(attributes.error.message)
+  BY attributes.session.id, attributes.user.name, attributes.page.url
+| SORT error_count DESC
+```
+
+### 5. Thrashing / Lost Users
+
+**Question**: "Why are users scrolling frantically?"
+
+**Signals**:
+- `frustration.type: thrashing`
+- Multiple scroll direction changes
+
+**Common causes**:
+- Content not where expected
+- Search results irrelevant
+- Navigation unclear
+- Missing "back to top" on long pages
+
+```sql
+-- Thrashing events by page
+FROM logs-generic.otel-default
+| WHERE attributes.frustration.type == "thrashing"
+| STATS count = COUNT() BY attributes.page.url
+| SORT count DESC
+```
+
+### 6. Success vs Failure Path Comparison
+
+**Question**: "What do converting users do differently?"
+
+```sql
+-- Compare event patterns between successful and failed sessions
+FROM logs-generic.otel-default
+| WHERE attributes.session.id IN ("<successful_session_ids>")
+| STATS events = COUNT() BY attributes.event.category
+```
+
+## Root Cause Analysis Workflow
+
+### Step 1: Identify the Problem (Dashboard)
+Look at your funnel metrics. Example: "50% drop at Cart stage"
+
+### Step 2: Segment the Drop-offs
+```sql
+FROM logs-generic.otel-default
+| WHERE attributes.page.url LIKE "*cart*"
+| WHERE attributes.event.category == "user.frustration"
+| STATS count = COUNT() BY attributes.frustration.type
+```
+
+### Step 3: Find the Pattern
+```sql
+-- What element are they rage-clicking?
+FROM logs-generic.otel-default
+| WHERE attributes.frustration.type == "rage_click"
+| WHERE attributes.page.url LIKE "*cart*"
+| STATS count = COUNT() BY attributes.target.semantic_name
+| SORT count DESC
+```
+
+Result: "Add to Cart" button has 80% of rage clicks
+
+### Step 4: Drill into a Session
+```sql
+FROM logs-generic.otel-default
+| WHERE attributes.session.id == "sess_abc123"
+| SORT attributes.session.sequence ASC
+| KEEP @timestamp, body.text, attributes.event.category, attributes.target.semantic_name
+```
+
+See the exact event sequence:
+```
+1. user.click → "View Product"
+2. user.click → "Add to Cart"
+3. user.click → "Add to Cart"  ← started clicking again
+4. user.click → "Add to Cart"
+5. user.frustration.rage_click → score: 0.85
+6. (no more events - user left)
+```
+
+### Step 5: Correlate with Backend
+If you have trace correlation, link frontend events to backend performance:
+
+```sql
+FROM traces-generic.otel-default
+| WHERE trace.id == "<trace_id_from_session>"
+| SORT @timestamp ASC
+```
+
+Find: `add-to-cart` API took 8 seconds → user thought it was broken
+
+### Step 6: Fix & Verify
+- Add loading spinner to button
+- Re-run load tests
+- Watch rage_click rate drop in dashboard
+
+## The AI-Native Advantage
+
+**Traditional session replay**: "Watch 100 session recordings to find the pattern"
+
+**Semantic session replay**:
+```
+"Show me sessions where users:
+- Visited the cart page
+- Had a frustration event (rage click, dead click, or thrashing)
+- Did NOT complete checkout
+- Group by the element that frustrated them"
+```
+
+This query finds the root cause in **seconds**, not hours.
+
+## AI Assistant Integration
+
+For Elastic AI Assistant, we provide a knowledge base document at `docs/ai-assistant-kb.md` that can be ingested into the RAG system. This enables natural language queries like:
+
+- "Show me frustrated users on the checkout page"
+- "What errors are users encountering?"
+- "Why are users abandoning at cart?"
+- "What elements are causing rage clicks?"
+
 ## Configuration
 
 ### Environment Variables

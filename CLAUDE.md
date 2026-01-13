@@ -441,10 +441,103 @@ pnpm build
 pnpm test
 
 # Load testing with Playwright
-ITERATIONS=10 node examples/demo-app/start.js --load
+SESSIONS=10 node examples/demo-app/start.js --load
 
 # Interactive (non-headless)
 HEADLESS=false node examples/demo-app/start.js --load
+```
+
+### Load Test Flow
+
+The load test (`examples/demo-app/load-test.js`) simulates realistic user sessions with the following flow:
+
+1. **Session Initialization**
+   - Sets a random user from test pool (Alice, Bob, Carol, David)
+   - User has id, email, and name attributes
+
+2. **Navigation Events**
+   - Page view to home page (hash: `#home`)
+   - Navigation events emitted with `user.navigation` category
+
+3. **Interaction Events**
+   - Click on "Dashboard" link → `user.click` event
+   - Click on "Products" link → `user.click` event
+   - Click on "Checkout" link → `user.click` event
+
+4. **Rage Click Detection**
+   - 5 rapid clicks on the submit button (within 1 second)
+   - Triggers `user.frustration.rage_click` event
+   - Score: 0.6-1.0 depending on velocity
+
+5. **Dead Click Detection**
+   - Click on non-interactive element (`#dead-click-area`)
+   - Triggers `user.frustration.dead_click` event
+   - Score: 0.3 (non-interactive element)
+
+6. **Thrashing Detection**
+   - 5 rapid scroll direction changes
+   - May trigger `user.frustration.thrashing` event
+
+7. **Form Submission & Checkout Flow**
+   - Click submit button → triggers checkout trace
+   - Creates parent-child span hierarchy:
+     ```
+     checkout.submit (Transaction)
+     └── checkout.validate_cart (Span)
+     └── checkout.process_payment (Span)
+     ```
+   - `checkout.started` and `checkout.completed` log events
+
+### Test Users
+
+| User ID | Name | Email |
+|---------|------|-------|
+| alice | Alice Johnson | alice@example.com |
+| bob | Bob Smith | bob@example.com |
+| carol | Carol Williams | carol@example.com |
+| david | David Brown | david@example.com |
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SESSIONS` | Number of simulated user sessions | 3 |
+| `HEADLESS` | Run browser in headless mode | true |
+| `PORT` | Demo server port | 3000 |
+
+### Kibana Dashboard
+
+The dashboard is deployed to: `https://[KIBANA_URL]/app/dashboards#/view/session-replay-dashboard`
+
+**Visualizations:**
+- **Total Sessions**: Unique count of session IDs
+- **Frustrated Sessions**: Sessions with frustration events
+- **Active Sessions Over Time**: Area chart of sessions by timestamp
+- **Events by Category**: Stacked area of event categories
+- **Frustration Over Time**: Line chart of frustration events
+- **Frustration by Type**: Donut chart (rage_click, dead_click, thrashing)
+- **Rage Click Hotspots**: Bar chart of elements receiving rage clicks
+- **Page Flow**: Horizontal bar of page URLs by session count
+- **Top Frustrated Users**: Users with most frustration events
+- **Top Frustration Pages**: Pages with most frustration events
+- **Session Explorer**: Data table for drilling into sessions
+- **Errors by Page**: Bar chart of errors by page URL
+
+### Dashboard Deployment
+
+```bash
+# Export dashboard to NDJSON
+cd scripts
+pnpm exec tsx -e "
+import { getSessionReplayDashboard } from './kibana/dashboards.ts';
+console.log(JSON.stringify(getSessionReplayDashboard()));
+" > /tmp/dashboard.ndjson
+
+# Import to Kibana (with overwrite)
+curl -X POST "$KIBANA_URL/api/saved_objects/_import?overwrite=true" \
+  -H "Authorization: ApiKey $ES_API_KEY" \
+  -H "kbn-xsrf: true" \
+  --form file=@/tmp/dashboard.ndjson
 ```
 
 ## Key Design Principles
@@ -466,3 +559,146 @@ When working on this project:
 - In Elastic: Transaction = root span, Span = child span
 - Keep the browser bundle lightweight
 - All instrumentation should be opt-in and non-intrusive
+
+## Session Replay Use Cases
+
+### 1. Funnel Drop-off Analysis
+**Question**: "Where are users dropping off and why?"
+
+| Funnel Stage | Drop-off Signal | Root Cause Pattern |
+|--------------|-----------------|-------------------|
+| Products → Cart | No `add-to-cart` click | Pricing confusion, no CTA visibility |
+| Cart → Checkout | Cart abandonment | Shipping cost surprise, login wall |
+| Checkout → Payment | Form abandonment | Confusing fields, validation errors |
+| Payment → Confirmation | Rage click on submit | Button disabled, slow API, payment error |
+
+### 2. Rage Click Investigation
+**Question**: "Why are users clicking repeatedly on this button?"
+
+**Root Causes**:
+- Button disabled during API call (no loading indicator)
+- JavaScript error preventing handler
+- Network timeout (correlate with trace data)
+- Double-click protection blocking legitimate clicks
+
+### 3. Dead Click Confusion
+**Question**: "Why do users click on things that don't work?"
+
+**Root Causes**:
+- Styled div looks like a button
+- Link missing href attribute
+- Disabled state not visually obvious
+- Image that looks like a CTA
+
+### 4. Error → Abandonment Correlation
+**Question**: "Are JavaScript errors causing users to leave?"
+
+**Pattern**: User hits error → no more events → session ended
+
+### 5. Thrashing / Lost Users
+**Question**: "Why are users scrolling frantically?"
+
+**Root Causes**:
+- Content not where expected
+- Search results irrelevant
+- Navigation unclear
+- Missing "back to top" on long pages
+
+### 6. Form Abandonment Analysis
+**Question**: "Which field makes users give up?"
+
+**Pattern**: Users bail after a specific field → investigate that field's UX
+
+### 7. Slow UI Response Detection
+**Question**: "Is our UI too slow?"
+
+**Correlation**: `trace.id` links click to backend call duration
+
+### 8. Success vs Failure Path Comparison
+**Question**: "What do converting users do differently?"
+
+**Approach**: Compare event patterns between successful and failed sessions
+
+## Root Cause Analysis Workflow
+
+### Step 1: Identify the Problem (Dashboard)
+- Funnel shows drop-off at a specific stage
+- "Frustrated Sessions" metric is high
+
+### Step 2: Segment the Drop-offs (ES|QL)
+```sql
+-- What frustration types are occurring at cart?
+FROM logs-generic.otel-default
+| WHERE attributes.page.url LIKE "*cart*"
+| WHERE attributes.frustration.type IS NOT NULL
+| STATS
+    rage_clicks = COUNT_IF(attributes.frustration.type == "rage_click"),
+    dead_clicks = COUNT_IF(attributes.frustration.type == "dead_click"),
+    errors = COUNT_IF(attributes.event.category == "user.error")
+```
+
+### Step 3: Find the Pattern (Correlation)
+```sql
+-- What element are they rage-clicking?
+FROM logs-generic.otel-default
+| WHERE attributes.frustration.type == "rage_click"
+| WHERE attributes.page.url LIKE "*cart*"
+| STATS count = COUNT() BY attributes.target.semantic_name
+| SORT count DESC
+```
+
+### Step 4: Drill into a Session (Timeline)
+```sql
+-- See exact event sequence for a frustrated user
+FROM logs-generic.otel-default
+| WHERE attributes.session.id == "sess_abc123"
+| SORT attributes.session.sequence ASC
+```
+
+### Step 5: Correlate with Backend (Traces)
+```sql
+-- Find slow API calls from the session
+FROM traces-generic.otel-default
+| WHERE trace.id == "trace_from_session"
+| SORT @timestamp ASC
+```
+
+### Step 6: Fix & Verify
+- Implement fix (loading spinner, error handling, etc.)
+- Re-run load tests
+- Watch frustration rate drop in dashboard
+
+## Load Test Behavior Cohorts
+
+The load test simulates realistic funnel drop-offs with these user behavior patterns:
+
+| Cohort | Weight | Journey | Frustration Signal |
+|--------|--------|---------|-------------------|
+| `happy_path` | 25% | home → products → cart → checkout → **purchase** | None |
+| `rage_click_cart` | 20% | home → products → cart → **DROP** | Rage click on Add to Cart |
+| `dead_click_confused` | 15% | home → products → **DROP** | Dead click on price area |
+| `error_victim` | 20% | home → products → cart → checkout → **DROP** | JS error on checkout |
+| `thrasher` | 10% | home → products → cart → checkout → **DROP** | Thrashing (scroll changes) |
+| `silent_abandon` | 10% | home → products → cart → **DROP** | None (sticker shock) |
+
+### Expected Funnel Distribution
+
+For 50 sessions:
+```
+Home:     50 sessions (100%)
+Products: ~45 sessions (90%)
+Cart:     ~32 sessions (65%)
+Checkout: ~22 sessions (45%)
+Purchase: ~12 sessions (25%)
+```
+
+### Running the Load Test
+
+```bash
+# Generate funnel data
+cd /path/to/sessionreplay/examples/demo-app
+SESSIONS=50 HEADLESS=true node load-test.js
+
+# Or via start script
+SESSIONS=50 node start.js --load
+```

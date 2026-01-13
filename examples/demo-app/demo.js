@@ -20,8 +20,10 @@ import {
   RageClickDetector,
   DeadClickDetector,
   ThrashingDetector,
+  ErrorTracker,
   // Event helpers (for custom events)
   emitSessionEvent,
+  emitErrorEvent,
 } from '../../packages/browser-agent/dist/browser.js';
 
 // Get config from window (set by server or defaults)
@@ -121,6 +123,26 @@ if (scrollArea) {
   thrashingDetector.enable();
   console.log('[Demo] Thrashing detector enabled');
 }
+
+// Initialize error tracker (emits logs for JS errors)
+const errorTracker = new ErrorTracker({
+  window: window,
+  onError: (event) => {
+    logEvent('ERROR', { type: event.type, message: event.message.slice(0, 50) });
+    console.error('[Demo] ERROR TRACKED:', event);
+
+    // Emit as session log event
+    emitErrorEvent(event.message, {
+      'error.type': event.type,
+      'error.filename': event.filename,
+      'error.lineno': event.lineno,
+      'error.colno': event.colno,
+      'error.stack': event.stack?.slice(0, 500),
+    });
+  },
+});
+errorTracker.enable();
+console.log('[Demo] Error tracker enabled');
 
 // Wire up demo buttons
 

@@ -480,6 +480,311 @@ export function getSessionActivityVisualization(): SavedObject {
   };
 }
 
+export function getSessionExplorerVisualization(): SavedObject {
+  return {
+    type: 'lens',
+    id: 'session-replay-session-explorer',
+    attributes: {
+      title: 'Session Explorer',
+      description: 'Data table to find and explore individual sessions',
+      visualizationType: 'lnsDatatable',
+      state: {
+        datasourceStates: {
+          formBased: {
+            layers: {
+              layer1: {
+                columns: {
+                  col1: {
+                    dataType: 'string',
+                    isBucketed: true,
+                    label: 'Session ID',
+                    operationType: 'terms',
+                    params: { size: 50, orderBy: { type: 'column', columnId: 'col3' }, orderDirection: 'desc' },
+                    scale: 'ordinal',
+                    sourceField: 'attributes.session.id',
+                  },
+                  col2: {
+                    dataType: 'string',
+                    isBucketed: true,
+                    label: 'User',
+                    operationType: 'terms',
+                    params: { size: 1, orderBy: { type: 'column', columnId: 'col3' }, orderDirection: 'desc' },
+                    scale: 'ordinal',
+                    sourceField: 'attributes.user.name',
+                  },
+                  col3: {
+                    dataType: 'number',
+                    isBucketed: false,
+                    label: 'Events',
+                    operationType: 'count',
+                    scale: 'ratio',
+                  },
+                  col4: {
+                    dataType: 'number',
+                    isBucketed: false,
+                    label: 'Frustrations',
+                    operationType: 'count',
+                    scale: 'ratio',
+                    filter: { query: 'attributes.frustration.type: *', language: 'kuery' },
+                  },
+                  col5: {
+                    dataType: 'string',
+                    isBucketed: true,
+                    label: 'Last Page',
+                    operationType: 'terms',
+                    params: { size: 1, orderBy: { type: 'column', columnId: 'col3' }, orderDirection: 'desc' },
+                    scale: 'ordinal',
+                    sourceField: 'attributes.page.url',
+                  },
+                },
+                columnOrder: ['col1', 'col2', 'col3', 'col4', 'col5'],
+                incompleteColumns: {},
+              },
+            },
+          },
+        },
+        filters: [
+          {
+            meta: { index: DATA_VIEW_ID },
+            query: { exists: { field: 'attributes.session.id' } },
+          },
+        ],
+        visualization: {
+          columns: [
+            { columnId: 'col1', isTransposed: false },
+            { columnId: 'col2', isTransposed: false },
+            { columnId: 'col3', isTransposed: false },
+            { columnId: 'col4', isTransposed: false },
+            { columnId: 'col5', isTransposed: false },
+          ],
+          layerId: 'layer1',
+          layerType: 'data',
+        },
+      },
+      references: [{ id: DATA_VIEW_ID, name: 'indexpattern-datasource-layer-layer1', type: 'index-pattern' }],
+    },
+  };
+}
+
+export function getRageClickHotspotsVisualization(): SavedObject {
+  return {
+    type: 'lens',
+    id: 'session-replay-rage-click-hotspots',
+    attributes: {
+      title: 'Rage Click Hotspots',
+      description: 'UI elements that receive the most rage clicks',
+      visualizationType: 'lnsXY',
+      state: {
+        datasourceStates: {
+          formBased: {
+            layers: {
+              layer1: {
+                columns: {
+                  col1: {
+                    dataType: 'string',
+                    isBucketed: true,
+                    label: 'Element',
+                    operationType: 'terms',
+                    params: { size: 10, orderBy: { type: 'column', columnId: 'col2' }, orderDirection: 'desc' },
+                    scale: 'ordinal',
+                    sourceField: 'attributes.target.semantic_name',
+                  },
+                  col2: {
+                    dataType: 'number',
+                    isBucketed: false,
+                    label: 'Rage Clicks',
+                    operationType: 'count',
+                    scale: 'ratio',
+                  },
+                },
+                columnOrder: ['col1', 'col2'],
+                incompleteColumns: {},
+              },
+            },
+          },
+        },
+        filters: [
+          {
+            meta: { index: DATA_VIEW_ID },
+            query: { match_phrase: { 'attributes.frustration.type': 'rage_click' } },
+          },
+        ],
+        visualization: {
+          axisTitlesVisibilitySettings: { x: true, yLeft: true, yRight: true },
+          layers: [
+            {
+              accessors: ['col2'],
+              layerId: 'layer1',
+              layerType: 'data',
+              seriesType: 'bar_horizontal',
+              xAccessor: 'col1',
+            },
+          ],
+          legend: { isVisible: false, position: 'right' },
+          preferredSeriesType: 'bar_horizontal',
+          title: 'Rage Click Hotspots',
+          valueLabels: 'show',
+        },
+      },
+      references: [{ id: DATA_VIEW_ID, name: 'indexpattern-datasource-layer-layer1', type: 'index-pattern' }],
+    },
+  };
+}
+
+export function getTotalSessionsMetricVisualization(): SavedObject {
+  return {
+    type: 'lens',
+    id: 'session-replay-total-sessions',
+    attributes: {
+      title: 'Total Sessions',
+      description: 'Total unique sessions count',
+      visualizationType: 'lnsMetric',
+      state: {
+        datasourceStates: {
+          formBased: {
+            layers: {
+              layer1: {
+                columns: {
+                  col1: {
+                    dataType: 'number',
+                    isBucketed: false,
+                    label: 'Total Sessions',
+                    operationType: 'unique_count',
+                    scale: 'ratio',
+                    sourceField: 'attributes.session.id',
+                  },
+                },
+                columnOrder: ['col1'],
+                incompleteColumns: {},
+              },
+            },
+          },
+        },
+        filters: [],
+        visualization: {
+          layerId: 'layer1',
+          layerType: 'data',
+          metricAccessor: 'col1',
+        },
+      },
+      references: [{ id: DATA_VIEW_ID, name: 'indexpattern-datasource-layer-layer1', type: 'index-pattern' }],
+    },
+  };
+}
+
+export function getFrustratedSessionsMetricVisualization(): SavedObject {
+  return {
+    type: 'lens',
+    id: 'session-replay-frustrated-sessions',
+    attributes: {
+      title: 'Frustrated Sessions',
+      description: 'Sessions with at least one frustration event',
+      visualizationType: 'lnsMetric',
+      state: {
+        datasourceStates: {
+          formBased: {
+            layers: {
+              layer1: {
+                columns: {
+                  col1: {
+                    dataType: 'number',
+                    isBucketed: false,
+                    label: 'Frustrated Sessions',
+                    operationType: 'unique_count',
+                    scale: 'ratio',
+                    sourceField: 'attributes.session.id',
+                  },
+                },
+                columnOrder: ['col1'],
+                incompleteColumns: {},
+              },
+            },
+          },
+        },
+        filters: [
+          {
+            meta: { index: DATA_VIEW_ID },
+            query: { exists: { field: 'attributes.frustration.type' } },
+          },
+        ],
+        visualization: {
+          layerId: 'layer1',
+          layerType: 'data',
+          metricAccessor: 'col1',
+          color: '#E7664C',
+        },
+      },
+      references: [{ id: DATA_VIEW_ID, name: 'indexpattern-datasource-layer-layer1', type: 'index-pattern' }],
+    },
+  };
+}
+
+export function getPageFlowVisualization(): SavedObject {
+  return {
+    type: 'lens',
+    id: 'session-replay-page-flow',
+    attributes: {
+      title: 'Page Flow',
+      description: 'Top pages by unique session visits',
+      visualizationType: 'lnsXY',
+      state: {
+        datasourceStates: {
+          formBased: {
+            layers: {
+              layer1: {
+                columns: {
+                  col1: {
+                    dataType: 'string',
+                    isBucketed: true,
+                    label: 'Page',
+                    operationType: 'terms',
+                    params: { size: 15, orderBy: { type: 'column', columnId: 'col2' }, orderDirection: 'desc' },
+                    scale: 'ordinal',
+                    sourceField: 'attributes.page.url',
+                  },
+                  col2: {
+                    dataType: 'number',
+                    isBucketed: false,
+                    label: 'Unique Sessions',
+                    operationType: 'unique_count',
+                    scale: 'ratio',
+                    sourceField: 'attributes.session.id',
+                  },
+                },
+                columnOrder: ['col1', 'col2'],
+                incompleteColumns: {},
+              },
+            },
+          },
+        },
+        filters: [
+          {
+            meta: { index: DATA_VIEW_ID },
+            query: { exists: { field: 'attributes.page.url' } },
+          },
+        ],
+        visualization: {
+          axisTitlesVisibilitySettings: { x: true, yLeft: true, yRight: true },
+          layers: [
+            {
+              accessors: ['col2'],
+              layerId: 'layer1',
+              layerType: 'data',
+              seriesType: 'bar_horizontal',
+              xAccessor: 'col1',
+            },
+          ],
+          legend: { isVisible: false, position: 'right' },
+          preferredSeriesType: 'bar_horizontal',
+          title: 'Page Flow',
+          valueLabels: 'show',
+        },
+      },
+      references: [{ id: DATA_VIEW_ID, name: 'indexpattern-datasource-layer-layer1', type: 'index-pattern' }],
+    },
+  };
+}
+
 export function getAllVisualizations(): SavedObject[] {
   return [
     getFrustrationOverTimeVisualization(),
@@ -489,5 +794,11 @@ export function getAllVisualizations(): SavedObject[] {
     getNavigationVisualization(),
     getFrustratedUsersVisualization(),
     getSessionActivityVisualization(),
+    // New visualizations
+    getSessionExplorerVisualization(),
+    getRageClickHotspotsVisualization(),
+    getTotalSessionsMetricVisualization(),
+    getFrustratedSessionsMetricVisualization(),
+    getPageFlowVisualization(),
   ];
 }
