@@ -55,6 +55,183 @@ cp examples/demo-app/.env.example examples/demo-app/.env
 ./start.sh
 ```
 
+## Setting Up Elastic Cloud
+
+This section walks through setting up Elastic Cloud to receive session replay data and deploy the pre-built dashboard.
+
+### Prerequisites
+
+- Elastic Cloud account ([sign up for a free trial](https://cloud.elastic.co/registration))
+- Or self-hosted Elastic Stack 8.x+ with APM Server
+
+### Step 1: Create a Deployment
+
+If you don't have an existing deployment:
+
+1. Go to [cloud.elastic.co](https://cloud.elastic.co)
+2. Click **Create deployment**
+3. Select **Observability** as the solution type
+4. Choose your cloud provider and region
+5. Click **Create deployment** and wait for it to be ready
+6. Save the generated credentials (you'll need them later)
+
+### Step 2: Get Your OTLP Endpoint
+
+The browser agent sends data via OTLP (OpenTelemetry Protocol). To find your endpoint:
+
+**Option A: From the Observability UI**
+1. In Kibana, go to **Observability → Add data**
+2. Select **Monitor infrastructure** → **OpenTelemetry**
+3. Copy the OTLP endpoint (looks like: `https://xxx.apm.us-east-1.aws.elastic.cloud:443`)
+
+**Option B: From Deployment Settings**
+1. Go to [cloud.elastic.co](https://cloud.elastic.co) → **Deployments** → Your deployment
+2. Click **Copy endpoint** next to APM & Fleet
+3. The endpoint format: `https://xxx.apm.us-east-1.aws.elastic.cloud:443`
+
+Your OTLP endpoints will be:
+- Logs: `{endpoint}/v1/logs`
+- Traces: `{endpoint}/v1/traces`
+
+### Step 3: Create an API Key
+
+You need an API key for the browser agent to authenticate:
+
+1. In Kibana, go to **Stack Management → API Keys**
+2. Click **Create API key**
+3. Configure:
+   - **Name**: `session-replay-agent`
+   - **Restrict privileges**: Recommended to enable for security
+   - **Index privileges** (if restricting):
+     - Indices: `logs-*`, `traces-*`, `metrics-*`
+     - Privileges: `write`, `create_index`
+4. Click **Create API key**
+5. Copy the **Encoded** value (Base64 format) — you'll need this for `OTEL_EXPORTER_OTLP_HEADERS`
+
+For the dashboard setup script, you'll also need a key with Kibana access:
+1. Create another API key or use the same one
+2. Ensure it has access to Kibana Saved Objects API
+3. Copy the encoded value for `ES_API_KEY`
+
+### Step 4: Configure Environment Variables
+
+Copy the example environment file and fill in your credentials:
+
+```bash
+cp examples/demo-app/.env.example examples/demo-app/.env
+```
+
+Edit `.env` with your values:
+
+```bash
+# OTLP Endpoint (from Step 2)
+OTEL_EXPORTER_OTLP_ENDPOINT=https://your-deployment.apm.us-east-1.aws.elastic.cloud:443
+
+# API Key for OTLP auth (from Step 3 - the encoded Base64 value)
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=ApiKey YOUR_ENCODED_API_KEY
+
+# Service metadata
+OTEL_RESOURCE_ATTRIBUTES=service.name=session-replay-demo,service.version=0.0.1,deployment.environment=development
+
+# For dashboard setup and verification scripts
+KIBANA_URL=https://your-deployment.kb.us-east-1.aws.elastic.cloud
+ES_API_KEY=YOUR_ENCODED_API_KEY
+```
+
+**Finding your Kibana URL:**
+- Go to [cloud.elastic.co](https://cloud.elastic.co) → **Deployments** → Your deployment
+- Click **Copy endpoint** next to Kibana
+- Or click **Open** next to Kibana and copy the URL from your browser
+
+### Step 5: Deploy the Dashboard
+
+The project includes a pre-built Kibana dashboard with 13 visualizations for session replay analysis. Deploy it using the setup script:
+
+```bash
+cd scripts
+pnpm install  # if not already done
+pnpm exec tsx setup-elastic.ts \
+  --kibana-url "https://your-deployment.kb.us-east-1.aws.elastic.cloud" \
+  --api-key "YOUR_ENCODED_API_KEY"
+```
+
+**What gets created:**
+- **Data View**: `session-replay-traces-*` for querying session data
+- **12 Visualizations**: Metrics, time series, pie charts, bar charts, data tables
+- **1 Dashboard**: "Session Replay - User Frustration"
+
+Expected output:
+```
+🚀 Session Replay Elastic Setup
+
+Kibana URL: https://your-deployment.kb.us-east-1.aws.elastic.cloud
+Space: default
+
+📡 Checking Kibana connection...
+✅ Connected to Kibana
+
+📊 Creating data view...
+✅ Created data view: session-replay-traces-*
+
+📈 Creating visualizations...
+✅ Created 12 visualizations
+
+📋 Creating dashboard...
+✅ Created dashboard: Session Replay - User Frustration
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎉 Setup complete!
+
+View your dashboard at:
+  https://your-deployment.kb.us-east-1.aws.elastic.cloud/app/dashboards#/view/session-replay-dashboard
+```
+
+### Step 6: Verify the Setup
+
+1. **Run the demo app** to generate test data:
+   ```bash
+   ./start.sh
+   ```
+
+2. **Check the dashboard** in Kibana:
+   - Open: `<KIBANA_URL>/app/dashboards#/view/session-replay-dashboard`
+   - You should see session data populating the visualizations
+
+3. **Verify in Discover**:
+   - Go to Kibana → **Discover**
+   - Select the `logs-*` data view
+   - Filter: `attributes.event.category: user*`
+   - You should see click events, frustration events, and navigation events
+
+4. **Run verification script** (optional):
+   ```bash
+   node examples/demo-app/verify-elastic.js
+   ```
+
+### Troubleshooting
+
+**"Unauthorized" or 401 errors**
+- Verify your API key is the Base64 encoded version (not the ID)
+- Check the API key has the required index privileges
+
+**Dashboard shows no data**
+- Ensure the demo app is running and generating events
+- Check the time filter in Kibana (try "Last 1 hour")
+- Verify events are reaching Elastic: check Discover with `logs-*` data view
+
+**CORS errors in browser console**
+- Elastic Cloud OTLP endpoints support CORS by default
+- If self-hosted, configure APM Server CORS settings
+
+**"Data view not found" in dashboard**
+- Run the setup script again to create the data view
+- Or manually create a data view for `logs-generic.otel-default` in Stack Management
+
+**Connection refused to Kibana**
+- Verify the Kibana URL doesn't have a trailing slash
+- Ensure you're using HTTPS (not HTTP) for Elastic Cloud
+
 ## Architecture
 
 We use **two OTLP signals**:

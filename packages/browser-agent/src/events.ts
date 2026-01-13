@@ -17,7 +17,9 @@ export type EventCategory =
   | 'user.error'
   | 'user.frustration'
   | 'form.interaction'
-  | 'page.lifecycle';
+  | 'page.lifecycle'
+  | 'funnel.ecommerce'
+  | 'funnel.lead';
 
 /**
  * Frustration types that can be detected

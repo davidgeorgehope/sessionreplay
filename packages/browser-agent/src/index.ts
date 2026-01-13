@@ -73,6 +73,37 @@ export { RageClickDetector } from './frustration/rage-click';
 export { DeadClickDetector, isInteractiveElement } from './frustration/dead-click';
 export { ThrashingDetector } from './frustration/thrashing';
 
+// Funnel tracking (Meta Pixel + GA4 compatible)
+export {
+  // Ecommerce events
+  trackViewContent,
+  trackViewItemList,
+  trackSearch,
+  trackSelectItem,
+  trackAddToWishlist,
+  trackAddToCart,
+  trackRemoveFromCart,
+  trackViewCart,
+  trackInitiateCheckout,
+  trackAddShippingInfo,
+  trackAddPaymentInfo,
+  trackPurchase,
+  trackRefund,
+  // Lead gen events
+  trackLead,
+  trackCompleteRegistration,
+  trackContact,
+  trackStartTrial,
+  trackSubmitApplication,
+  trackSubscribe,
+  trackSchedule,
+  trackFindLocation,
+  trackDonate,
+  trackCustomizeProduct,
+} from './funnel';
+
+export type { FunnelStage, ContentItem } from './funnel';
+
 // Types
 export type {
   SessionReplayConfig,
