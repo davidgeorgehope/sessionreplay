@@ -92,7 +92,7 @@ import {
   RageClickDetector,
   DeadClickDetector,
   ThrashingDetector,
-} from '@anthropic/session-replay-browser-agent';
+} from '@session-replay/browser-agent';
 
 // Initialize providers
 createSessionLogProvider({
@@ -124,7 +124,7 @@ new ThrashingDetector({ window }).enable();
 ### Custom Events
 
 ```javascript
-import { emitSessionEvent, getTracer } from '@anthropic/session-replay-browser-agent';
+import { emitSessionEvent, getTracer } from '@session-replay/browser-agent';
 
 // Emit a custom log event
 emitSessionEvent({
@@ -146,7 +146,7 @@ span.end();
 ### Parent-Child Spans with Correlated Logs
 
 ```javascript
-import { trace, context, getTracer, emitSessionEvent } from '@anthropic/session-replay-browser-agent';
+import { trace, context, getTracer, emitSessionEvent } from '@session-replay/browser-agent';
 
 const tracer = getTracer();
 
@@ -185,7 +185,7 @@ import {
   ClickInstrumentation,
   RageClickDetector,
   DeadClickDetector,
-} from '@anthropic/session-replay-browser-agent';
+} from '@session-replay/browser-agent';
 
 export function initSessionReplay(config) {
   // Initialize providers
@@ -207,7 +207,7 @@ export function initSessionReplay(config) {
   new DeadClickDetector().enable();
 }
 
-export { setUser, emitSessionEvent, getTracer } from '@anthropic/session-replay-browser-agent';
+export { setUser, emitSessionEvent, getTracer } from '@session-replay/browser-agent';
 ```
 
 ```jsx
@@ -250,7 +250,7 @@ function App() {
     ClickInstrumentation,
     RageClickDetector,
     emitSessionEvent,
-  } from 'https://unpkg.com/@anthropic/session-replay-browser-agent/dist/browser.js';
+  } from 'https://unpkg.com/@session-replay/browser-agent/dist/browser.js';
 
   // Initialize
   createSessionLogProvider({
@@ -296,7 +296,7 @@ export function SessionReplayProvider({ children }) {
     // Only run on client
     if (typeof window === 'undefined') return;
 
-    import('@anthropic/session-replay-browser-agent').then(({
+    import('@session-replay/browser-agent').then(({
       createSessionLogProvider,
       createSessionReplayProvider,
       ClickInstrumentation,

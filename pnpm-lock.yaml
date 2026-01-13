@@ -14,7 +14,7 @@ importers:
 
   apps/demo:
     dependencies:
-      '@anthropic/session-replay-browser-agent':
+      '@session-replay/browser-agent':
         specifier: workspace:*
         version: link:../../packages/browser-agent
       react:

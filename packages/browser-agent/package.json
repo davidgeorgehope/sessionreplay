@@ -1,5 +1,5 @@
 {
-  "name": "@anthropic/session-replay-browser-agent",
+  "name": "@session-replay/browser-agent",
   "version": "0.0.1",
   "description": "Browser instrumentation for AI-native session understanding",
   "type": "module",

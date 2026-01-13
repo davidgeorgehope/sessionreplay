@@ -9,7 +9,7 @@ import {
   ThrashingDetector,
   getTracer,
   getSemanticName,
-} from '@anthropic/session-replay-browser-agent';
+} from '@session-replay/browser-agent';
 
 // Initialize OpenTelemetry provider
 const provider = createSessionReplayProvider({

@@ -1,5 +1,5 @@
 {
-  "name": "@anthropic/session-replay-demo",
+  "name": "@session-replay/demo",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -12,7 +12,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.21.0",
-    "@anthropic/session-replay-browser-agent": "workspace:*"
+    "@session-replay/browser-agent": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

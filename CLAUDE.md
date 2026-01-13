@@ -244,7 +244,7 @@ import {
   clearUser,         // Clear user (logout)
   getUser,           // Get current user
   resetSession,      // Force new session
-} from '@anthropic/session-replay-browser-agent';
+} from '@session-replay/browser-agent';
 
 // Set user after login
 setUser({
@@ -262,7 +262,7 @@ import {
   emitSessionEvent,
   emitClickEvent,
   emitFrustrationEvent,
-} from '@anthropic/session-replay-browser-agent';
+} from '@session-replay/browser-agent';
 
 // Initialize
 const logProvider = createSessionLogProvider({
@@ -289,7 +289,7 @@ import {
   getTracer,
   trace,
   context,
-} from '@anthropic/session-replay-browser-agent';
+} from '@session-replay/browser-agent';
 
 // Initialize
 const traceProvider = createSessionReplayProvider({
@@ -311,7 +311,7 @@ span.end();
 To create child spans under a parent (visible as Transaction → Spans in Elastic APM):
 
 ```typescript
-import { trace, context, getTracer, emitSessionEvent } from '@anthropic/session-replay-browser-agent';
+import { trace, context, getTracer, emitSessionEvent } from '@session-replay/browser-agent';
 
 const tracer = getTracer();
 
@@ -371,7 +371,7 @@ import {
   RageClickDetector,
   DeadClickDetector,
   ThrashingDetector,
-} from '@anthropic/session-replay-browser-agent';
+} from '@session-replay/browser-agent';
 
 // All detectors auto-emit logs when enabled
 const rageDetector = new RageClickDetector({
