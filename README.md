@@ -256,13 +256,24 @@ Browser Agent                    Elastic Cloud
 
 ```javascript
 import {
+  // Providers
   createSessionLogProvider,
   createSessionReplayProvider,
+  // Session management
   setUser,
+  getSessionId,
+  // Auto-instrumentation
   ClickInstrumentation,
+  FormTracker,
+  NavigationTracker,
+  ErrorTracker,
+  // Frustration detection
   RageClickDetector,
   DeadClickDetector,
   ThrashingDetector,
+  // Event helpers
+  emitSessionEvent,
+  getTracer,
 } from '@session-replay/browser-agent';
 
 // Initialize providers
@@ -287,6 +298,11 @@ setUser({
 
 // Enable auto-instrumentation
 new ClickInstrumentation({ document }).enable();
+new FormTracker({ document }).enable();
+new NavigationTracker({ window }).enable();
+new ErrorTracker({ window }).enable();
+
+// Enable frustration detection
 new RageClickDetector({ clickThreshold: 3 }).enable();
 new DeadClickDetector().enable();
 new ThrashingDetector({ window }).enable();
@@ -343,6 +359,325 @@ context.with(trace.setSpan(context.active(), checkoutSpan), () => {
 checkoutSpan.end();
 ```
 
+## Instrumentations Reference
+
+### ClickInstrumentation
+
+Automatically captures all click events with semantic context.
+
+```javascript
+import { ClickInstrumentation } from '@session-replay/browser-agent';
+
+const clicks = new ClickInstrumentation({
+  document: document,
+  captureCoordinates: false,  // optional: don't capture x/y coordinates
+});
+clicks.enable();
+
+// To disable later:
+clicks.disable();
+```
+
+**Captured attributes:**
+- `target.semantic_name` - Button text, aria-label, or computed name
+- `target.element` - Tag name (button, a, div, etc.)
+- `target.id` - Element ID
+- `target.classes` - CSS classes
+- `page.url`, `page.title` - Page context
+
+### FormTracker
+
+Tracks form field interactions and submissions.
+
+```javascript
+import { FormTracker } from '@session-replay/browser-agent';
+
+const forms = new FormTracker({
+  document: document,
+  hesitationThreshold: 3000,  // ms before field is considered "hesitation"
+  onFormEvent: (event) => {
+    console.log('Form event:', event.action, event.formName);
+  },
+  onFieldEvent: (event) => {
+    if (event.hesitation) {
+      console.log('User hesitated on:', event.fieldName);
+    }
+  },
+});
+forms.enable();
+```
+
+**Captured events:**
+- `form.focus` - Field focused
+- `form.blur` - Field blurred (with time spent)
+- `form.submit` - Form submitted
+- Field hesitation detection (user paused on a field)
+
+### NavigationTracker
+
+Tracks page navigation events (SPA and traditional).
+
+```javascript
+import { NavigationTracker } from '@session-replay/browser-agent';
+
+const nav = new NavigationTracker({
+  window: window,
+  onNavigation: (event) => {
+    console.log('Navigation:', event.type, event.toUrl);
+  },
+});
+nav.enable();
+```
+
+**Captured events:**
+- `pageview` - Initial page load
+- `hashchange` - Hash navigation (#/page)
+- `popstate` - Browser back/forward
+
+### ErrorTracker
+
+Captures JavaScript errors and unhandled promise rejections.
+
+```javascript
+import { ErrorTracker } from '@session-replay/browser-agent';
+
+const errors = new ErrorTracker({
+  window: window,
+  onError: (event) => {
+    console.error('Tracked error:', event.message);
+  },
+});
+errors.enable();
+
+// Track last click for error context
+document.addEventListener('click', (e) => {
+  errors.recordLastClick(e.target.innerText);
+});
+```
+
+**Captured attributes:**
+- `error.type` - 'error' or 'unhandledrejection'
+- `error.message` - Error message
+- `error.stack` - Stack trace
+- `error.filename`, `error.lineno`, `error.colno` - Source location
+- `error.context.last_click` - What user clicked before error
+
+## Frustration Detectors
+
+### RageClickDetector
+
+Detects rapid repeated clicks on the same element (user frustration).
+
+```javascript
+import { RageClickDetector } from '@session-replay/browser-agent';
+
+const rageDetector = new RageClickDetector({
+  clickThreshold: 3,      // clicks needed to trigger (default: 3)
+  timeWindowMs: 1000,     // time window in ms (default: 1000)
+  emitLogs: true,         // auto-emit log events (default: true)
+  onRageClick: (event) => {
+    console.warn('Rage click!', {
+      clicks: event.clickCount,
+      element: event.target?.semanticName,
+      score: event.score,  // 0-1 frustration score
+    });
+  },
+});
+rageDetector.enable();
+```
+
+### DeadClickDetector
+
+Detects clicks on non-interactive elements (user expected action but nothing happened).
+
+```javascript
+import { DeadClickDetector } from '@session-replay/browser-agent';
+
+const deadClickDetector = new DeadClickDetector({
+  checkParents: true,     // check if parent is interactive (default: true)
+  emitLogs: true,         // auto-emit log events (default: true)
+  onDeadClick: (event) => {
+    console.warn('Dead click on:', event.elementTag, event.reason);
+  },
+});
+deadClickDetector.enable();
+```
+
+**Reasons detected:**
+- `non_interactive` - Element is not a button, link, input, etc.
+- `disabled` - Element is disabled
+- `no_handler` - No click handler attached
+
+### ThrashingDetector
+
+Detects rapid scroll direction changes (user is lost/confused).
+
+```javascript
+import { ThrashingDetector } from '@session-replay/browser-agent';
+
+const thrashingDetector = new ThrashingDetector({
+  window: window,
+  minDirectionChanges: 4,  // changes needed to trigger (default: 4)
+  timeWindowMs: 2000,      // time window in ms (default: 2000)
+  emitLogs: true,          // auto-emit log events (default: true)
+  onThrashing: (event) => {
+    console.warn('Thrashing detected!', {
+      directionChanges: event.directionChanges,
+      score: event.score,
+      scrollDistance: event.scrollDistance,
+    });
+  },
+});
+thrashingDetector.enable();
+```
+
+## Funnel Tracking (Optional - Ecommerce/Lead Gen)
+
+**For ecommerce and lead generation sites only.** Track standard conversion events compatible with Meta Pixel and Google Analytics 4. This is optional - skip this section if you're not building an ecommerce or lead-gen site.
+
+### Ecommerce Events
+
+```javascript
+import {
+  trackViewContent,
+  trackAddToCart,
+  trackViewCart,
+  trackInitiateCheckout,
+  trackAddPaymentInfo,
+  trackPurchase,
+  trackRemoveFromCart,
+  trackAddToWishlist,
+  trackSearch,
+} from '@session-replay/browser-agent';
+
+// User views a product
+trackViewContent({
+  contentId: 'PROD-123',
+  contentName: 'Blue Widget',
+  contentCategory: 'Widgets',
+  value: 49.99,
+  currency: 'USD',
+});
+
+// User adds to cart
+trackAddToCart({
+  contentId: 'PROD-123',
+  contentName: 'Blue Widget',
+  value: 49.99,
+  currency: 'USD',
+  quantity: 1,
+});
+
+// User views cart
+trackViewCart({
+  value: 149.99,
+  currency: 'USD',
+  items: [
+    { id: 'PROD-123', name: 'Blue Widget', price: 49.99, quantity: 2 },
+    { id: 'PROD-456', name: 'Red Gadget', price: 50.01, quantity: 1 },
+  ],
+});
+
+// User starts checkout
+trackInitiateCheckout({
+  value: 149.99,
+  currency: 'USD',
+  numItems: 3,
+  contentIds: ['PROD-123', 'PROD-456'],
+});
+
+// User adds payment info
+trackAddPaymentInfo({
+  value: 149.99,
+  currency: 'USD',
+  paymentType: 'credit_card',
+});
+
+// User completes purchase
+trackPurchase({
+  transactionId: 'TXN-789',
+  value: 149.99,
+  currency: 'USD',
+  contentIds: ['PROD-123', 'PROD-456'],
+  numItems: 3,
+});
+
+// User searches
+trackSearch({
+  searchString: 'blue widgets',
+  contentCategory: 'Widgets',
+});
+```
+
+### Lead Generation Events
+
+```javascript
+import {
+  trackLead,
+  trackCompleteRegistration,
+  trackContact,
+  trackSubscribe,
+  trackStartTrial,
+  trackSubmitApplication,
+  trackSchedule,
+  trackDonate,
+} from '@session-replay/browser-agent';
+
+// Lead captured
+trackLead({
+  value: 100,        // estimated lead value
+  currency: 'USD',
+  leadType: 'newsletter',
+});
+
+// User signs up
+trackCompleteRegistration({
+  value: 0,
+  currency: 'USD',
+  status: 'complete',
+  registrationMethod: 'email',
+});
+
+// User contacts business
+trackContact();
+
+// User subscribes
+trackSubscribe({
+  value: 9.99,
+  currency: 'USD',
+  predictedLtv: 120,
+});
+
+// User starts trial
+trackStartTrial({
+  value: 0,
+  currency: 'USD',
+  predictedLtv: 500,
+});
+```
+
+### Funnel Event Attributes
+
+All funnel events include:
+- `funnel.event` - Event name (e.g., 'add_to_cart')
+- `funnel.stage` - Funnel stage (awareness, interest, cart, checkout, payment, conversion)
+- `meta.event` - Meta Pixel equivalent (e.g., 'AddToCart')
+- `ga4.event` - GA4 equivalent (e.g., 'add_to_cart')
+
+Query funnel data in ES|QL:
+```sql
+-- Funnel conversion by stage
+FROM logs-generic.otel-default
+| WHERE attributes.event.category == "funnel.ecommerce"
+| STATS sessions = COUNT_DISTINCT(attributes.session.id) BY attributes.funnel.stage
+
+-- Cart abandonment with frustration correlation
+FROM logs-generic.otel-default
+| WHERE attributes.funnel.event == "add_to_cart"
+| STATS added = COUNT() BY attributes.session.id
+| WHERE added > 0
+```
+
 ## Integrating in Your App
 
 ### React Example
@@ -353,12 +688,23 @@ import {
   createSessionLogProvider,
   createSessionReplayProvider,
   setUser,
+  // Auto-instrumentation
   ClickInstrumentation,
+  FormTracker,
+  NavigationTracker,
+  ErrorTracker,
+  // Frustration detection
   RageClickDetector,
   DeadClickDetector,
+  ThrashingDetector,
 } from '@session-replay/browser-agent';
 
+let initialized = false;
+
 export function initSessionReplay(config) {
+  if (initialized) return;
+  initialized = true;
+
   // Initialize providers
   createSessionLogProvider({
     serviceName: config.serviceName,
@@ -374,10 +720,17 @@ export function initSessionReplay(config) {
 
   // Enable auto-instrumentation
   new ClickInstrumentation({ document }).enable();
+  new FormTracker({ document }).enable();
+  new NavigationTracker({ window }).enable();
+  new ErrorTracker({ window }).enable();
+
+  // Enable frustration detection
   new RageClickDetector({ clickThreshold: 3 }).enable();
   new DeadClickDetector().enable();
+  new ThrashingDetector({ window }).enable();
 }
 
+// Re-export for use in components
 export { setUser, emitSessionEvent, getTracer } from '@session-replay/browser-agent';
 ```
 
@@ -388,7 +741,6 @@ import { initSessionReplay, setUser } from './instrumentation';
 
 function App() {
   useEffect(() => {
-    // Initialize on app mount
     initSessionReplay({
       serviceName: 'my-react-app',
       otlpEndpoint: import.meta.env.VITE_OTLP_ENDPOINT,
@@ -397,7 +749,6 @@ function App() {
   }, []);
 
   const handleLogin = (user) => {
-    // Set user identity after authentication
     setUser({
       id: user.id,
       email: user.email,
@@ -412,47 +763,62 @@ function App() {
 ### Vanilla JavaScript Example
 
 ```html
-<!-- Include the browser bundle -->
-<script type="module">
-  import {
-    createSessionLogProvider,
-    createSessionReplayProvider,
-    setUser,
-    ClickInstrumentation,
-    RageClickDetector,
-    emitSessionEvent,
-  } from 'https://unpkg.com/@session-replay/browser-agent/dist/browser.js';
+<!DOCTYPE html>
+<html>
+<head>
+  <title>My Website</title>
+</head>
+<body>
+  <script type="module">
+    import {
+      // Providers
+      createSessionLogProvider,
+      createSessionReplayProvider,
+      setUser,
+      // Auto-instrumentation
+      ClickInstrumentation,
+      FormTracker,
+      NavigationTracker,
+      ErrorTracker,
+      // Frustration detection
+      RageClickDetector,
+      DeadClickDetector,
+      ThrashingDetector,
+    } from 'https://unpkg.com/@session-replay/browser-agent/dist/browser.js';
 
-  // Initialize
-  createSessionLogProvider({
-    serviceName: 'my-website',
-    endpoint: 'https://your-elastic.cloud:443/v1/logs',
-    apiKey: 'your-api-key',
-  });
-
-  createSessionReplayProvider({
-    serviceName: 'my-website',
-    endpoint: 'https://your-elastic.cloud:443/v1/traces',
-    apiKey: 'your-api-key',
-  });
-
-  // Enable instrumentation
-  new ClickInstrumentation({ document }).enable();
-  new RageClickDetector({ clickThreshold: 3 }).enable();
-
-  // Set user when known
-  document.addEventListener('userLoggedIn', (e) => {
-    setUser({ id: e.detail.userId, email: e.detail.email });
-  });
-
-  // Track custom events
-  document.getElementById('signup-btn').addEventListener('click', () => {
-    emitSessionEvent({
-      name: 'signup.clicked',
-      attributes: { 'event.category': 'user.interaction' },
+    // Initialize providers
+    createSessionLogProvider({
+      serviceName: 'my-website',
+      endpoint: 'https://your-elastic.cloud:443/v1/logs',
+      apiKey: 'your-api-key',
     });
-  });
-</script>
+
+    createSessionReplayProvider({
+      serviceName: 'my-website',
+      endpoint: 'https://your-elastic.cloud:443/v1/traces',
+      apiKey: 'your-api-key',
+    });
+
+    // Enable all auto-instrumentation
+    new ClickInstrumentation({ document }).enable();
+    new FormTracker({ document }).enable();
+    new NavigationTracker({ window }).enable();
+    new ErrorTracker({ window }).enable();
+
+    // Enable all frustration detection
+    new RageClickDetector({ clickThreshold: 3 }).enable();
+    new DeadClickDetector().enable();
+    new ThrashingDetector({ window }).enable();
+
+    // Set user when logged in
+    window.setSessionUser = (user) => {
+      setUser({ id: user.id, email: user.email, name: user.name });
+    };
+
+    console.log('Session replay initialized!');
+  </script>
+</body>
+</html>
 ```
 
 ### Next.js Example
@@ -460,37 +826,64 @@ function App() {
 ```jsx
 // app/providers.jsx
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 export function SessionReplayProvider({ children }) {
+  const initialized = useRef(false);
+
   useEffect(() => {
-    // Only run on client
     if (typeof window === 'undefined') return;
+    if (initialized.current) return;
+    initialized.current = true;
 
-    import('@session-replay/browser-agent').then(({
-      createSessionLogProvider,
-      createSessionReplayProvider,
-      ClickInstrumentation,
-      RageClickDetector,
-    }) => {
-      createSessionLogProvider({
+    import('@session-replay/browser-agent').then((sr) => {
+      // Initialize providers
+      sr.createSessionLogProvider({
         serviceName: 'my-nextjs-app',
         endpoint: process.env.NEXT_PUBLIC_OTLP_ENDPOINT,
         apiKey: process.env.NEXT_PUBLIC_OTLP_API_KEY,
       });
 
-      createSessionReplayProvider({
+      sr.createSessionReplayProvider({
         serviceName: 'my-nextjs-app',
         endpoint: process.env.NEXT_PUBLIC_OTLP_ENDPOINT,
         apiKey: process.env.NEXT_PUBLIC_OTLP_API_KEY,
       });
 
-      new ClickInstrumentation({ document }).enable();
-      new RageClickDetector({ clickThreshold: 3 }).enable();
+      // Enable all auto-instrumentation
+      new sr.ClickInstrumentation({ document }).enable();
+      new sr.FormTracker({ document }).enable();
+      new sr.NavigationTracker({ window }).enable();
+      new sr.ErrorTracker({ window }).enable();
+
+      // Enable all frustration detection
+      new sr.RageClickDetector({ clickThreshold: 3 }).enable();
+      new sr.DeadClickDetector().enable();
+      new sr.ThrashingDetector({ window }).enable();
+
+      // Make setUser available globally for auth callbacks
+      window.__sessionReplay = { setUser: sr.setUser };
     });
   }, []);
 
   return children;
+}
+```
+
+```jsx
+// app/layout.jsx
+import { SessionReplayProvider } from './providers';
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>
+        <SessionReplayProvider>
+          {children}
+        </SessionReplayProvider>
+      </body>
+    </html>
+  );
 }
 ```
 
