@@ -1,4 +1,4 @@
-# Session Replay Alternative: AI-Native Session Understanding
+# Session Replay 
 
 An open-source alternative to traditional session replay. Instead of recording DOM mutations and playing back video, we capture semantically rich events and use AI to synthesize understanding.
 
